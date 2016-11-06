@@ -1,4 +1,4 @@
-SUBDIRS = bin gmmbin
+SUBDIRS = bin gmmbin latbin
 
 .PHONY: all install clean distclean $(SUBDIRS)
 
