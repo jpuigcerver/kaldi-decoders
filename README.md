@@ -25,7 +25,7 @@ make install
 
 ## Available decoders
 
-- gmm-decode-lazylm-faster/gmm-latgen-lazylm-faster
+### gmm-decode-lazylm-faster / gmm-latgen-lazylm-faster
 
 Kaldi decoders typically recive the HCLG finite state transducer to perform
 the decoding. However, when a large vocabulary is used, or even more, when
