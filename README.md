@@ -25,14 +25,21 @@ make install
 
 ## Available decoders
 
-### gmm-decode-lazylm-faster / gmm-latgen-lazylm-faster
+### LazyLM decoders
 
 Kaldi decoders typically recive the HCLG finite state transducer to perform
 the decoding. However, when a large vocabulary is used, or even more, when
 a large n-gram language model is used for G, the amount of memory required
 to store the HCLG transducer may be too large.
 
-These two decoders receive the HCL and G transducers separately, and then
+These decoders receive the HCL and G transducers separately, and then
 make a dynamic (on-the-fly) composition to obtain the HCLG transducer while
 decoding. The dynamic composition, together with beam pruning, makes the
 amount of required memory much smaller.
+
+- decode-lazylm-faster-mapped : Decode utterances, reading
+   log-likelihoods as matrices.
+- gmm-decode-lazylm-faster : Decode features using GMM-based model.
+- gmm-latgen-lazylm-faster : Generate lattices using GMM-based model.
+- latgen-lazylm-faster-mapped : Generate lattices, reading
+   log-likelihoods as matrices.

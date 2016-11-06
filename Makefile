@@ -1,6 +1,8 @@
-SUBDIRS = gmmbin
+SUBDIRS = bin gmmbin
 
 .PHONY: all install clean distclean $(SUBDIRS)
+
+all: $(SUBDIRS)
 
 $(SUBDIRS):
 	$(MAKE) -C $@

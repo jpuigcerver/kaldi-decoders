@@ -1,4 +1,4 @@
-// gmmbin/gmm-latgen-lazylm-faster.cc
+// bin/latgen-lazylm-faster-mapped.cc
 //
 // Copyright (c) 2016 Joan Puigcerver <joapuipe@gmail.com>
 //
@@ -22,16 +22,12 @@
 
 #include "base/kaldi-common.h"
 #include "util/common-utils.h"
-#include "gmm/am-diag-gmm.h"
 #include "tree/context-dep.h"
 #include "hmm/transition-model.h"
 #include "fstext/fstext-lib.h"
 #include "decoder/decoder-wrappers.h"
-#include "gmm/decodable-am-diag-gmm.h"
+#include "decoder/decodable-matrix.h"
 #include "base/timer.h"
-#include "feat/feature-functions.h"  // feature reversal
-#include "fstext/table-matcher.h"
-#include "fstext/fstext-utils.h"
 
 namespace fst {
 
@@ -56,6 +52,7 @@ ComposeFst<Arc> TableComposeFst(
 
 }  // namespace fst
 
+
 int main(int argc, char *argv[]) {
   try {
     using namespace kaldi;
@@ -65,36 +62,28 @@ int main(int argc, char *argv[]) {
     using fst::StdArc;
 
     const char *usage =
-        "Generate lattices using GMM-based model.\n"
-        "User supplies the HCL and the G transducers independently and the "
-        "composition is done on-demand during the decoding.\n"
-        "This is very useful when the language model is very big and HCLG "
-        "would result in a too large FST.\n\n"
-        "Usage: gmm-latgen-lazylm-faster [options] model-in "
-        "(hcl-fst|hcl-rspecifier) (lm-fst|lm-rspecifier) "
-        "features-rspecifier lattice-wspecifier "
-        "[ words-wspecifier [alignments-wspecifier] ]\n";
+        "Generate lattices, reading log-likelihoods as matrices and doing the "
+        "composition of HCL and G on-the-fly. You can use this decoder to "
+        "perform decoding using large grammars (i.e. large n-gram LMs).\n"
+        "\n"
+        "Usage:   latgen-lazylm-faster-mapped [options] <model-in> "
+        "<hcl-in> <g-in> <loglikes-rspecifier> <lattice-wspecifier> "
+        "[<words-wspecifier> [<alignments-wspecifier>]]\n";
+
     ParseOptions po(usage);
-    LatticeFasterDecoderConfig decoder_config;
-    fst::CacheOptions cache_config;
     Timer timer;
     bool allow_partial = false;
     BaseFloat acoustic_scale = 0.1;
-    int gc_limit = 536870912;  // 512MB
-    std::string match_side = "left";
-    std::string compose_filter = "sequence";
+    LatticeFasterDecoderConfig config;
     std::string word_syms_filename;
-    decoder_config.Register(&po);
+    fst::CacheOptions cache_config;
+    int gc_limit = 536870912;  // 512MB
+
+    config.Register(&po);
     po.Register("acoustic-scale", &acoustic_scale,
-                "Scaling factor for acoustic likelihoods");
-    po.Register("word-symbol-table", &word_syms_filename,
-                "Symbol table for words [for debug output]");
+                "Scaling factor for acoustic likelihoos.");
     po.Register("allow-partial", &allow_partial,
                 "If true, produce output even if end state was not reached.");
-    po.Register("match-side", &match_side, "Side of composition to do table "
-                "match, one of: \"left\" or \"right\".");
-    po.Register("compose-filter", &compose_filter, "Composition filter to use, "
-                "one of: \"alt_sequence\", \"auto\", \"match\", \"sequence\"");
     po.Register("compose-gc", &cache_config.gc,
                 "If false, any expanded state during the composition will be "
                 "cached. If true, the cache will be garbage collected when it "
@@ -102,6 +91,8 @@ int main(int argc, char *argv[]) {
     po.Register("compose-gc-limit", &gc_limit,
                 "Number of bytes allowed in the composition cache before "
                 "garbage collection.");
+    po.Register("word-symbol-table", &word_syms_filename,
+                "Symbol table for words [for debug output].");
     po.Read(argc, argv);
     cache_config.gc_limit = gc_limit;
 
@@ -112,22 +103,16 @@ int main(int argc, char *argv[]) {
 
     std::string model_in_filename = po.GetArg(1),
         hcl_in_str = po.GetArg(2),
-        lm_in_str =  po.GetArg(3),
+        g_in_str = po.GetArg(3),
         feature_rspecifier = po.GetArg(4),
         lattice_wspecifier = po.GetArg(5),
         words_wspecifier = po.GetOptArg(6),
         alignment_wspecifier = po.GetOptArg(7);
 
     TransitionModel trans_model;
-    AmDiagGmm am_gmm;
-    {
-      bool binary;
-      Input ki(model_in_filename, &binary);
-      trans_model.Read(ki.Stream(), binary);
-      am_gmm.Read(ki.Stream(), binary);
-    }
+    ReadKaldiObject(model_in_filename, &trans_model);
 
-    bool determinize = decoder_config.determinize_lattice;
+    bool determinize = config.determinize_lattice;
     CompactLatticeWriter compact_lattice_writer;
     LatticeWriter lattice_writer;
     if (! (determinize ? compact_lattice_writer.Open(lattice_wspecifier)
@@ -147,96 +132,103 @@ int main(int argc, char *argv[]) {
 
     double tot_like = 0.0;
     kaldi::int64 frame_count = 0;
-    int num_done = 0, num_err = 0;
+    int num_success = 0, num_fail = 0;
 
     const bool is_table_hcl =
         ClassifyRspecifier(hcl_in_str, NULL, NULL) != kNoRspecifier;
-    const bool is_table_lm =
-        ClassifyRspecifier(lm_in_str, NULL, NULL) != kNoRspecifier;
+    const bool is_table_g =
+        ClassifyRspecifier(g_in_str, NULL, NULL) != kNoRspecifier;
 
-    if (!is_table_hcl && !is_table_lm) {
-      // Input FSTs are just two FSTs, not two tables of FSTs.
+    if (!is_table_hcl && !is_table_g) {
+      SequentialBaseFloatMatrixReader loglike_reader(feature_rspecifier);
+      // It's important that we initialize decode_fst after loglikes_reader,
+      // as it can prevent crashes on systems installed without enough virtual
+      // memory.
+      // It has to do with what happens on UNIX systems if you call fork() on a
+      // large process: the page-table entries are duplicated, which requires a
+      // lot of virtual memory.
       VectorFst<StdArc> *hcl_fst = fst::ReadFstKaldi(hcl_in_str);
-      VectorFst<StdArc> *lm_fst = fst::ReadFstKaldi(lm_in_str);
+      VectorFst<StdArc> *g_fst = fst::ReadFstKaldi(g_in_str);
 
       // On-demand composition of HCL and G
       fst::ComposeFst<StdArc> decode_fst = fst::TableComposeFst(
-          *hcl_fst, *lm_fst, cache_config);
+          *hcl_fst, *g_fst, cache_config);
+      timer.Reset();
 
-      LatticeFasterDecoder decoder(decode_fst, decoder_config);
+      {
+        LatticeFasterDecoder decoder(decode_fst, config);
 
-      SequentialBaseFloatMatrixReader feature_reader(feature_rspecifier);
-      for (; !feature_reader.Done(); feature_reader.Next()) {
-        std::string utt = feature_reader.Key();
-        Matrix<BaseFloat> features (feature_reader.Value());
-        feature_reader.FreeCurrent();
-        if (features.NumRows() == 0) {
+        for (; !loglike_reader.Done(); loglike_reader.Next()) {
+          std::string utt = loglike_reader.Key();
+          Matrix<BaseFloat> loglikes (loglike_reader.Value());
+          loglike_reader.FreeCurrent();
+          if (loglikes.NumRows() == 0) {
+            KALDI_WARN << "Zero-length utterance: " << utt;
+            num_fail++;
+            continue;
+          }
+
+          DecodableMatrixScaledMapped decodable(trans_model, loglikes,
+                                                acoustic_scale);
+
+          double like;
+          if (DecodeUtteranceLatticeFaster(
+                  decoder, decodable, trans_model, word_syms, utt,
+                  acoustic_scale, determinize, allow_partial, &alignment_writer,
+                  &words_writer, &compact_lattice_writer, &lattice_writer,
+                  &like)) {
+            tot_like += like;
+            frame_count += loglikes.NumRows();
+            num_success++;
+          } else num_fail++;
+        }
+      }
+      // delete these only after decoder goes out of scope.
+      delete hcl_fst;
+      delete g_fst;
+    } else if(is_table_hcl && is_table_g) {
+      // We have different FSTs for different utterances.
+      SequentialBaseFloatMatrixReader loglike_reader(feature_rspecifier);
+      RandomAccessTableReader<fst::VectorFstHolder> hcl_reader(hcl_in_str);
+      RandomAccessTableReader<fst::VectorFstHolder> g_reader(g_in_str);
+      for (; !loglike_reader.Done(); loglike_reader.Next()) {
+        std::string utt = loglike_reader.Key();
+        const Matrix<BaseFloat> &loglikes = loglike_reader.Value();
+        loglike_reader.FreeCurrent();
+        if (loglikes.NumRows() == 0) {
           KALDI_WARN << "Zero-length utterance: " << utt;
-          num_err++;
+          num_fail++;
           continue;
         }
-
-        DecodableAmDiagGmmScaled gmm_decodable(am_gmm, trans_model, features,
-                                               acoustic_scale);
-        double like;
-        if (DecodeUtteranceLatticeFaster(
-                decoder, gmm_decodable, trans_model, word_syms, utt,
-                acoustic_scale, determinize, allow_partial, &alignment_writer,
-                &words_writer, &compact_lattice_writer, &lattice_writer,
-                &like)) {
-          tot_like += like;
-          frame_count += features.NumRows();
-          num_done++;
-        } else num_err++;
-      }
-
-      delete hcl_fst;
-      delete lm_fst;
-    } else if (is_table_hcl && is_table_lm) {
-      // Both HCL and LM FSTs are actually tables of FSTs
-      SequentialBaseFloatMatrixReader feature_reader(feature_rspecifier);
-      RandomAccessTableReader<fst::VectorFstHolder> hcl_reader(hcl_in_str);
-      RandomAccessTableReader<fst::VectorFstHolder> lm_reader(lm_in_str);
-      for (; !feature_reader.Done(); feature_reader.Next()) {
-        std::string utt = feature_reader.Key();
         if (!hcl_reader.HasKey(utt)) {
           KALDI_WARN << "Not decoding utterance " << utt
                      << " because no HCL is available.";
-          num_err++;
+          num_fail++;
           continue;
         }
-        if (!lm_reader.HasKey(utt)) {
+        if (!g_reader.HasKey(utt)) {
           KALDI_WARN << "Not decoding utterance " << utt
                      << " because no G is available.";
-          num_err++;
-          continue;
-        }
-
-        const Matrix<BaseFloat> features(feature_reader.Value());
-        feature_reader.FreeCurrent();
-        if (features.NumRows() == 0) {
-          KALDI_WARN << "Zero-length utterance: " << utt;
-          num_err++;
+          num_fail++;
           continue;
         }
 
         // On-demand composition of HCL and G
         fst::ComposeFst<StdArc> decode_fst = fst::TableComposeFst(
-            hcl_reader.Value(utt), lm_reader.Value(utt), cache_config);
+            hcl_reader.Value(utt), g_reader.Value(utt), cache_config);
 
-        LatticeFasterDecoder decoder(decode_fst, decoder_config);
-        DecodableAmDiagGmmScaled gmm_decodable(am_gmm, trans_model, features,
-                                               acoustic_scale);
+        LatticeFasterDecoder decoder(decode_fst, config);
+        DecodableMatrixScaledMapped decodable(trans_model, loglikes,
+                                              acoustic_scale);
         double like;
         if (DecodeUtteranceLatticeFaster(
-                decoder, gmm_decodable, trans_model, word_syms, utt,
-                acoustic_scale, determinize, allow_partial, &alignment_writer,
-                &words_writer, &compact_lattice_writer, &lattice_writer,
-                &like)) {
+                decoder, decodable, trans_model, word_syms, utt, acoustic_scale,
+                determinize, allow_partial, &alignment_writer, &words_writer,
+                &compact_lattice_writer, &lattice_writer, &like)) {
           tot_like += like;
-          frame_count += features.NumRows();
-          num_done++;
-        } else num_err++;
+          frame_count += loglikes.NumRows();
+          num_success++;
+        } else num_fail++;
       }
     } else {
       KALDI_ERR << "The decoding of tables/non-tables and match-type that you "
@@ -245,18 +237,17 @@ int main(int argc, char *argv[]) {
                 << "program differently.";
     }
 
-    const double elapsed = timer.Elapsed();
+    double elapsed = timer.Elapsed();
     KALDI_LOG << "Time taken "<< elapsed
               << "s: real-time factor assuming 100 frames/sec is "
               << (elapsed*100.0/frame_count);
-    KALDI_LOG << "Done " << num_done << " utterances, failed for "
-              << num_err;
-    KALDI_LOG << "Overall log-likelihood per frame is "
-              << (tot_like/frame_count) << " over "
-              << frame_count << " frames.";
+    KALDI_LOG << "Done " << num_success << " utterances, failed for "
+              << num_fail;
+    KALDI_LOG << "Overall log-likelihood per frame is " << (tot_like/frame_count) << " over "
+              << frame_count<<" frames.";
 
     delete word_syms;
-    if (num_done != 0) return 0;
+    if (num_success != 0) return 0;
     else return 1;
   } catch(const std::exception &e) {
     std::cerr << e.what();
