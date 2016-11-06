@@ -37,9 +37,9 @@ make a dynamic (on-the-fly) composition to obtain the HCLG transducer while
 decoding. The dynamic composition, together with beam pruning, makes the
 amount of required memory much smaller.
 
-- decode-lazylm-faster-mapped : Decode utterances, reading
+- **decode-lazylm-faster-mapped**: Decode utterances, reading
    log-likelihoods as matrices.
-- gmm-decode-lazylm-faster : Decode features using GMM-based model.
-- gmm-latgen-lazylm-faster : Generate lattices using GMM-based model.
-- latgen-lazylm-faster-mapped : Generate lattices, reading
+- **gmm-decode-lazylm-faster**: Decode features using GMM-based model.
+- **gmm-latgen-lazylm-faster**: Generate lattices using GMM-based model.
+- **latgen-lazylm-faster-mapped**: Generate lattices, reading
    log-likelihoods as matrices.
