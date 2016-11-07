@@ -34,6 +34,13 @@ void ConvertLatticeWeight(const kaldi::CompactLatticeWeight& iw,
   *ow = LogArc::Weight(iw.Weight().Value1() + iw.Weight().Value2());
 }
 
+template <class Arc, ReweightType rtype>
+void Push(MutableFst<Arc>* fst, uint32 ptype) {
+  VectorFst<Arc> copy(*fst);
+  fst->DeleteStates();
+  Push<Arc, rtype>(copy, fst, ptype);
+}
+
 }  // namespace fst
 
 namespace kaldi {
@@ -218,10 +225,6 @@ int main(int argc, char *argv[]) {
         n_other_errors++;
         continue;
       }
-      fst::VectorFst<fst::LogArc> fst1;
-      fst::ConvertLattice(clat1, &fst1);
-      clat1.DeleteStates();  // free memory
-
 
       for (int32 i = 0; i < num_args-2; ++i) {
         if (clat_reader_vec[i]->HasKey(key)) {
@@ -239,9 +242,7 @@ int main(int argc, char *argv[]) {
             n_other_errors++;
             continue;
           }
-          fst::VectorFst<fst::LogArc> fst2;
-          fst::ConvertLattice(clat2, &fst2);
-          fst::Union(&fst1, fst2);
+          fst::Union(&clat1, clat2);
         } else {
           KALDI_WARN << "No lattice found for utterance " << key << " for "
                      << "system " << (i + 2) << ", rspecifier: "
@@ -249,26 +250,49 @@ int main(int argc, char *argv[]) {
           n_missing++;
         }
       }
-
+      // Convert CompactLattice to LogArc, O(V + E)
+      fst::VectorFst<fst::LogArc> fst1;
+      fst::ConvertLattice(clat1, &fst1);
+      // If the user did not requested alignments, we don't need the original
+      // lattices anymore. Free some space.
+      if (alignments_wspecifier == "") {
+        clat1.DeleteStates();
+      }
+      // Push weight to the left, so ShortestPath will expand less states
+      // during the determinization + search. O(V + E)
+      fst::Push<fst::LogArc, fst::REWEIGHT_TO_INITIAL>(
+          &fst1, fst::kPushWeights);
+      // Dynamic determinization, to prevent blow-up. O(exponential!)
       fst::DeterminizeFst<fst::LogArc> det_fst(fst1);
+      // Find best path with interpolated score: O(V + E)
       fst::VectorFst<fst::LogArc> best_path;
       fst::ShortestPath(fst1, &best_path);
       if (best_path.Start() == fst::kNoStateId) {
         KALDI_WARN << "Best-path failed for key " << key;
         n_other_errors++;
       } else {
-        std::vector<int32> alignment;
-        std::vector<int32> words;
+        // Obtain the best word sequence from the interpolated lattice.
+        std::vector<int32> alignment, words;
         fst::LogArc::Weight weight;
+        // Alignment is actually the same as words, since fst1 was an automaton
         GetLinearSymbolSequence(best_path, &alignment, &words, &weight);
-        KALDI_LOG << "For utterance " << key << ", best cost " << weight
-                  << " over " << alignment.size() << " frames.";
+
+        KALDI_LOG << "For utterance " << key << ", best cost " << weight;
         transcriptions_writer.Write(key, words);
-        if (alignments_wspecifier != "")
+
+        if (alignments_wspecifier != "") {
+          CompactLattice best_path_clat, best_path_align;
+          MakeLinearAcceptor(words, &best_path_clat);
+          fst::ShortestPath(
+              fst::ComposeFst<CompactLatticeArc>(clat1, best_path_clat),
+              &best_path_align);
+          KALDI_ASSERT(best_path_align.Start() != fst::kNoStateId);
+          // Words are not needed, since they are computed from the LogArc FST.
+          GetLinearSymbolSequence(best_path_align, &alignment, &words, 0);
           alignments_writer.Write(key, alignment);
+        }
+
         n_success++;
-        //n_frame += alignment.size();
-        //tot_weight = Times(tot_weight, weight);
       }
     }
 
