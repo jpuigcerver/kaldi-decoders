@@ -272,11 +272,10 @@ int main(int argc, char *argv[]) {
         n_other_errors++;
       } else {
         // Obtain the best word sequence from the interpolated lattice.
-        std::vector<int32> alignment, words;
+        std::vector<int32> words;
         fst::LogArc::Weight weight;
-        // Alignment is actually the same as words, since fst1 was an automaton
-        GetLinearSymbolSequence(best_path, &alignment, &words, &weight);
-
+        fst::GetLinearSymbolSequence<fst::LogArc, int32>(
+            best_path, NULL, &words, &weight);
         KALDI_LOG << "For utterance " << key << ", best cost " << weight;
         transcriptions_writer.Write(key, words);
 
@@ -287,8 +286,9 @@ int main(int argc, char *argv[]) {
               fst::ComposeFst<CompactLatticeArc>(clat1, best_path_clat),
               &best_path_align);
           KALDI_ASSERT(best_path_align.Start() != fst::kNoStateId);
-          // Words are not needed, since they are computed from the LogArc FST.
-          GetLinearSymbolSequence(best_path_align, &alignment, &words, 0);
+          std::vector<int32> alignment;
+          fst::GetLinearSymbolSequence<CompactLatticeArc, int32>(
+              best_path_align, &alignment, NULL, NULL);
           alignments_writer.Write(key, alignment);
         }
 
