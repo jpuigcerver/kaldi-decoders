@@ -49,6 +49,38 @@ ComposeFst<Arc> TableComposeFst(
   return ComposeFst<Arc>(ifst1, ifst2, opts);
 }
 
+class AddSymbolPenaltyMapper {
+ public:
+  typedef StdArc FromArc;
+  typedef StdArc ToArc;
+
+  AddSymbolPenaltyMapper(const StdArc::Label s, const float p) :
+      s_(s), p_(p) { }
+
+  StdArc operator()(const StdArc &arc) {
+    if (arc.ilabel == s_) {
+      StdArc new_arc = arc;
+      new_arc.weight = fst::Plus(arc.weight, p_);
+      return new_arc;
+    }
+    return arc;
+  }
+
+  MapFinalAction FinalAction() const { return MAP_NO_SUPERFINAL; }
+
+  MapSymbolsAction InputSymbolsAction() const { return MAP_COPY_SYMBOLS; }
+
+  MapSymbolsAction OutputSymbolsAction() const { return MAP_COPY_SYMBOLS; }
+
+  uint64 Properties(uint64 props) const {
+    return props & kWeightInvariantProperties;
+  }
+
+ private:
+  StdArc::Label  s_;
+  StdArc::Weight p_;
+};
+
 }  // namespace fst
 
 
@@ -74,7 +106,7 @@ int main(int argc, char *argv[]) {
     ParseOptions po(usage);
     Timer timer;
     bool allow_partial = false;
-    BaseFloat acoustic_scale = 0.1;
+    BaseFloat acoustic_scale = 0.1, oov_scale = 1.0, oov_penalty = 0.0;
     LatticeFasterDecoderConfig config;
     std::string word_syms_filename;
     fst::CacheOptions cache_config;
@@ -92,6 +124,11 @@ int main(int argc, char *argv[]) {
     po.Register("compose-gc-limit", &gc_limit,
                 "Number of bytes allowed in the composition cache before "
                 "garbage collection.");
+    po.Register("oov-penalty", &oov_penalty,
+                "Penalty added to the oov token. Note: it IS NOT affected "
+                "by the --oov-scale!");
+    po.Register("oov-scale", &oov_scale,
+                "Scaling factor applied to the oov fst (Gc).");
     po.Register("word-symbol-table", &word_syms_filename,
                 "Symbol table for words [for debug output].");
     po.Read(argc, argv);
@@ -154,6 +191,13 @@ int main(int argc, char *argv[]) {
     VectorFst<StdArc> *hcl_fst = fst::ReadFstKaldi(hcl_filename);
     VectorFst<StdArc> *g_fst = fst::ReadFstKaldi(g_filename);
     VectorFst<StdArc> *gc_fst = fst::ReadFstKaldi(gc_filename);
+
+    // Apply --oov-scale to Gc
+    fst::ArcMap(gc_fst,
+                fst::TimesMapper<StdArc>(fst::TropicalWeight(oov_scale)));
+
+    // Apply penalty to OOV token arcs
+    fst::ArcMap(g_fst, fst::AddSymbolPenaltyMapper(oov_token, oov_penalty));
 
     timer.Reset();
     {
