@@ -42,11 +42,10 @@ ComposeFst<Arc> TableComposeFst(
   typedef SequenceComposeFilter<TM, LA_SM> SCF;
   typedef LookAheadComposeFilter<SCF, TM, LA_SM, MATCH_INPUT> LCF;
   typedef PushWeightsComposeFilter<LCF, TM, LA_SM, MATCH_INPUT> PWCF;
-  typedef PushLabelsComposeFilter<PWCF, TM, LA_SM, MATCH_INPUT> PWLCF;
   TM* lam1 = new TM(ifst1, MATCH_OUTPUT);
   LA_SM* lam2 = new LA_SM(ifst2, MATCH_INPUT);
-  PWLCF* laf = new PWLCF(ifst1, ifst2, lam1, lam2);
-  ComposeFstImplOptions<TM, LA_SM, PWLCF> opts(cache_opts, lam1, lam2, laf);
+  PWCF* laf = new PWCF(ifst1, ifst2, lam1, lam2);
+  ComposeFstImplOptions<TM, LA_SM, PWCF> opts(cache_opts, lam1, lam2, laf);
   return ComposeFst<Arc>(ifst1, ifst2, opts);
 }
 
@@ -162,8 +161,11 @@ int main(int argc, char *argv[]) {
       std::vector< pair<StdArc::Label, const fst::Fst<StdArc>*> > fst_tuple;
       fst_tuple.push_back(make_pair(-1, g_fst));  // -1 is not used!
       fst_tuple.push_back(make_pair(oov_token, gc_fst));
-      fst::ReplaceFst<StdArc> R_fst(
-          fst_tuple, fst::ReplaceFstOptions<StdArc>(-1, true));
+      // Sort using ilabels to compose
+      fst::ArcSortFst<StdArc, fst::ILabelCompare<StdArc> > R_fst(
+          fst::ReplaceFst<StdArc>(fst_tuple,
+                                  fst::ReplaceFstOptions<StdArc>(-1, true)),
+          fst::ILabelCompare<StdArc>());
       // On-demand composition of HCL and R
       fst::ComposeFst<StdArc> decode_fst = fst::TableComposeFst(
           *hcl_fst, R_fst, cache_config);
