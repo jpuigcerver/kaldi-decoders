@@ -42,10 +42,11 @@ ComposeFst<Arc> TableComposeFst(
   typedef SequenceComposeFilter<TM, LA_SM> SCF;
   typedef LookAheadComposeFilter<SCF, TM, LA_SM, MATCH_INPUT> LCF;
   typedef PushWeightsComposeFilter<LCF, TM, LA_SM, MATCH_INPUT> PWCF;
+  typedef PushLabelsComposeFilter<PWCF, TM, LA_SM, MATCH_INPUT> PWLCF;
   TM* lam1 = new TM(ifst1, MATCH_OUTPUT);
   LA_SM* lam2 = new LA_SM(ifst2, MATCH_INPUT);
-  PWCF* laf = new PWCF(ifst1, ifst2, lam1, lam2);
-  ComposeFstImplOptions<TM, LA_SM, PWCF> opts(cache_opts, lam1, lam2, laf);
+  PWLCF* laf = new PWLCF(ifst1, ifst2, lam1, lam2);
+  ComposeFstImplOptions<TM, LA_SM, PWLCF> opts(cache_opts, lam1, lam2, laf);
   return ComposeFst<Arc>(ifst1, ifst2, opts);
 }
 
