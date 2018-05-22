@@ -15,3 +15,6 @@ clean:
 
 distclean:
 	-for x in $(SUBDIRS) $(EXT_SUBDIRS); do $(MAKE) -C $$x distclean; done
+
+depend:
+	-for x in $(SUBDIRS) $(EXT_SUBDIRS); do $(MAKE) -C $$x depend; done

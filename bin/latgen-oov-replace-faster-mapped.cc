@@ -201,7 +201,7 @@ int main(int argc, char *argv[]) {
     fst::ArcMap(g_fst, fst::AddSymbolPenaltyMapper(oov_token, oov_penalty));
 
     // On-demand replacement of the OOV token arcs in G by Gc.
-    std::vector< pair<StdArc::Label, const fst::Fst<StdArc>*> > fst_tuple;
+    std::vector< std::pair<StdArc::Label, const fst::Fst<StdArc>*> > fst_tuple;
     fst_tuple.push_back(make_pair(-1, g_fst));  // -1 is not used!
     fst_tuple.push_back(make_pair(oov_token, gc_fst));
 
