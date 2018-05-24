@@ -21,7 +21,6 @@ ADDLIBS = \
 	$(KALDI_ROOT)/src/tree/kaldi-tree.a \
         $(KALDI_ROOT)/src/util/kaldi-util.a \
 	$(KALDI_ROOT)/src/matrix/kaldi-matrix.a \
-	$(KALDI_ROOT)/src/thread/kaldi-thread.a \
 	$(KALDI_ROOT)/src/base/kaldi-base.a
 
 

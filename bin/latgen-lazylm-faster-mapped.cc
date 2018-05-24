@@ -74,6 +74,7 @@ int main(int argc, char *argv[]) {
     Timer timer;
     bool allow_partial = false;
     BaseFloat acoustic_scale = 0.1;
+    std::string retry_beam_str = "";
     LatticeFasterDecoderConfig config;
     std::string word_syms_filename;
     fst::CacheOptions cache_config;
@@ -93,6 +94,8 @@ int main(int argc, char *argv[]) {
                 "garbage collection.");
     po.Register("word-symbol-table", &word_syms_filename,
                 "Symbol table for words [for debug output].");
+    po.Register("retry-beam", &retry_beam_str,
+                "Space-separated list of beam to try when decoding fails");
     po.Read(argc, argv);
     cache_config.gc_limit = gc_limit;
 
@@ -100,6 +103,19 @@ int main(int argc, char *argv[]) {
       po.PrintUsage();
       exit(1);
     }
+
+    std::vector<BaseFloat> retry_beam, retry_beam_tmp;
+    kaldi::SplitStringToFloats(retry_beam_str, " ", true, &retry_beam_tmp);
+    for (auto b : retry_beam_tmp) {
+      if (b < config.beam) {
+        KALDI_WARN << "Ignoring retry beam " << b
+                   << ", which is lower than the default beam " << config.beam;
+      } else {
+        retry_beam.push_back(b);
+      }
+    }
+    retry_beam.push_back(config.beam);
+    std::sort(retry_beam.begin(), retry_beam.end());
 
     std::string model_in_filename = po.GetArg(1),
         hcl_in_str = po.GetArg(2),
@@ -170,17 +186,25 @@ int main(int argc, char *argv[]) {
 
           DecodableMatrixScaledMapped decodable(trans_model, loglikes,
                                                 acoustic_scale);
-
-          double like;
-          if (DecodeUtteranceLatticeFaster(
-                  decoder, decodable, trans_model, word_syms, utt,
-                  acoustic_scale, determinize, allow_partial, &alignment_writer,
-                  &words_writer, &compact_lattice_writer, &lattice_writer,
-                  &like)) {
-            tot_like += like;
-            frame_count += loglikes.NumRows();
-            num_success++;
-          } else num_fail++;
+          double like = -std::numeric_limits<double>::infinity();
+          bool success = false;
+          for (const auto& beam : retry_beam) {
+            auto retry_config = config;
+            retry_config.beam = beam;
+            decoder.SetOptions(retry_config);
+            if (DecodeUtteranceLatticeFaster(
+                    decoder, decodable, trans_model, word_syms, utt,
+                    acoustic_scale, determinize, allow_partial,
+                    &alignment_writer, &words_writer,
+                    &compact_lattice_writer, &lattice_writer, &like)) {
+              tot_like += like;
+              frame_count += loglikes.NumRows();
+              num_success++;
+              success = true;
+              break;
+            }
+          }
+          if (!success) { num_fail++; }
         }
       }
       // delete these only after decoder goes out of scope.
@@ -220,15 +244,25 @@ int main(int argc, char *argv[]) {
         LatticeFasterDecoder decoder(decode_fst, config);
         DecodableMatrixScaledMapped decodable(trans_model, loglikes,
                                               acoustic_scale);
-        double like;
-        if (DecodeUtteranceLatticeFaster(
-                decoder, decodable, trans_model, word_syms, utt, acoustic_scale,
-                determinize, allow_partial, &alignment_writer, &words_writer,
-                &compact_lattice_writer, &lattice_writer, &like)) {
-          tot_like += like;
-          frame_count += loglikes.NumRows();
-          num_success++;
-        } else num_fail++;
+        double like = -std::numeric_limits<double>::infinity();
+        bool success = false;
+        for (const auto& beam : retry_beam) {
+          auto retry_config = config;
+          retry_config.beam = beam;
+          decoder.SetOptions(retry_config);
+          if (DecodeUtteranceLatticeFaster(
+                  decoder, decodable, trans_model, word_syms, utt,
+                  acoustic_scale, determinize, allow_partial,
+                  &alignment_writer, &words_writer,
+                  &compact_lattice_writer, &lattice_writer, &like)) {
+            tot_like += like;
+            frame_count += loglikes.NumRows();
+            num_success++;
+            success = true;
+            break;
+          }
+        }
+        if (!success) { num_fail++; }
       }
     } else {
       KALDI_ERR << "The decoding of tables/non-tables and match-type that you "
@@ -243,14 +277,14 @@ int main(int argc, char *argv[]) {
               << (elapsed*100.0/frame_count);
     KALDI_LOG << "Done " << num_success << " utterances, failed for "
               << num_fail;
-    KALDI_LOG << "Overall log-likelihood per frame is " << (tot_like/frame_count) << " over "
-              << frame_count<<" frames.";
+    KALDI_LOG << "Overall log-likelihood per frame is "
+              << (tot_like/frame_count) << " over " << frame_count<<" frames.";
 
     delete word_syms;
     if (num_success != 0) return 0;
     else return 1;
   } catch(const std::exception &e) {
-    std::cerr << e.what();
+    std::cerr << e.what() << std::endl;
     return -1;
   }
 }
