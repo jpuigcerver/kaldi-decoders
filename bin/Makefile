@@ -3,25 +3,28 @@ ifndef KALDI_ROOT
 endif
 
 
-
 EXTRA_CXXFLAGS = -Wno-sign-compare -Wno-unused-variable -I$(KALDI_ROOT)/src
 include $(KALDI_ROOT)/src/kaldi.mk
 
-BINFILES = decode-lazylm-faster-mapped latgen-lazylm-faster-mapped
+BINFILES = \
+    decode-lazylm-faster-mapped \
+    latgen-ctc-faster-mapped-parallel \
+    latgen-lazylm-faster-mapped \
+    make-ctc-transducer
 
 OBJFILES =
 
 TESTFILES =
 
 ADDLIBS = \
-	$(KALDI_ROOT)/src/decoder/kaldi-decoder.a \
-	$(KALDI_ROOT)/src/lat/kaldi-lat.a \
-	$(KALDI_ROOT)/src/fstext/kaldi-fstext.a \
+        $(KALDI_ROOT)/src/decoder/kaldi-decoder.a \
+        $(KALDI_ROOT)/src/lat/kaldi-lat.a \
+        $(KALDI_ROOT)/src/fstext/kaldi-fstext.a \
         $(KALDI_ROOT)/src/hmm/kaldi-hmm.a \
-	$(KALDI_ROOT)/src/tree/kaldi-tree.a \
+        $(KALDI_ROOT)/src/tree/kaldi-tree.a \
         $(KALDI_ROOT)/src/util/kaldi-util.a \
-	$(KALDI_ROOT)/src/matrix/kaldi-matrix.a \
-	$(KALDI_ROOT)/src/base/kaldi-base.a
+        $(KALDI_ROOT)/src/matrix/kaldi-matrix.a \
+        $(KALDI_ROOT)/src/base/kaldi-base.a
 
 
 
