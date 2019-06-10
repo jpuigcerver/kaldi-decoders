@@ -1,5 +1,7 @@
 # kaldi-decoders
 
+[![Build Status](https://travis-ci.org/jpuigcerver/kaldi-decoders.svg?branch=ctc-decoder)](https://travis-ci.org/jpuigcerver/kaldi-decoders)
+
 This repository contains a set of custom Kaldi decoders.
 
 The directory has a similar structure of Kaldi's src dir: i.e. gmmbin contains

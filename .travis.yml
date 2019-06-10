@@ -1,0 +1,41 @@
+language: cpp
+
+os: linux
+
+dist: xenial
+
+addons:
+  apt:
+    packages:
+      - ccache
+      - libatlas-dev
+      - libatlas-base-dev
+      - liblapack-dev
+      - libopenblas-dev
+      - sox
+
+cache:
+  directories:
+    - $HOME/.ccache
+
+before_script:
+  - which ccache
+  - ccache --version
+  - ccache --show-stats
+  - ccache --zero-stats --max-size=4G
+
+script:
+  - export KALDI_ROOT=/tmp/kaldi
+  - export CC="ccache $CC"
+  - export CXX="ccache $CXX"
+  - travis/install_kaldi.sh
+  - make -j4 depend
+  - make -j4
+
+before_cache:
+  - ccache --show-stats
+
+notifications:
+  email:
+    on_success: change
+    on_failure: change
