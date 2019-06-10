@@ -1,6 +1,6 @@
 # kaldi-decoders
 
-[![Build Status](https://travis-ci.org/jpuigcerver/kaldi-decoders.svg?branch=ctc-decoder)](https://travis-ci.org/jpuigcerver/kaldi-decoders)
+[![Build Status](https://travis-ci.org/jpuigcerver/kaldi-decoders.svg?branch=master)](https://travis-ci.org/jpuigcerver/kaldi-decoders)
 
 This repository contains a set of custom Kaldi decoders.
 
