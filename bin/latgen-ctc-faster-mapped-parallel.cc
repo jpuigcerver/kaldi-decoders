@@ -174,7 +174,7 @@ int main(int argc, char *argv[]) {
     ParseOptions po(usage);
     Timer timer;
     bool allow_partial = false;
-    BaseFloat acoustic_scale = 0.1;
+    BaseFloat acoustic_scale = 1.0;
     CtcLatticeFasterDecoderConfig config;
     TaskSequencerConfig sequencer_config; // has --num-threads option
 
